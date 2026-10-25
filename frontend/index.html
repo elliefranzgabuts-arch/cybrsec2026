@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NetPulse | Network Performance</title>
+    <link rel="stylesheet" href="css/style.css">
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Inter Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
+</head>
+<body class="theme-dark">
+    <div class="app-shell">
+        <header class="main-header">
+            <div class="brand">
+                <div class="brand-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                </div>
+                <div class="brand-text">
+                    <h1>NetPulse</h1>
+                    <p>Network Performance Monitoring</p>
+                </div>
+            </div>
+            <div id="connectionStatus" class="status-pill">Connecting...</div>
+        </header>
+
+        <main class="dashboard-grid">
+            <!-- Hero Section: Command Center -->
+            <section class="hero-panel">
+                <div class="gauge-container">
+                    <div class="gauge-svg-wrapper">
+                        <svg viewBox="0 0 200 120" class="latency-gauge">
+                            <path d="M20 100 A 80 80 0 0 1 180 100" class="gauge-bg" />
+                            <path id="gaugeProgress" d="M20 100 A 80 80 0 0 1 180 100" class="gauge-progress" />
+                        </svg>
+                        <div class="gauge-readout">
+                            <span id="metricLatency" class="gauge-value">--</span>
+                            <span class="gauge-unit">ms</span>
+                        </div>
+                    </div>
+                    <div class="gauge-labels">
+                        <span class="label-min">0ms</span>
+                        <span class="label-max">500ms+</span>
+                    </div>
+                </div>
+
+                <div class="action-panel">
+                    <div class="input-group">
+                        <div class="field">
+                            <label for="targetInput">Target Host or IP</label>
+                            <input type="text" id="targetInput" placeholder="8.8.8.8 or google.com" spellcheck="false">
+                        </div>
+                        <button id="measureBtn" class="btn-primary">
+                            <span class="btn-content">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 15 9 9"></polyline></svg>
+                                Run Test
+                            </span>
+                            <div class="spinner hidden"></div>
+                        </button>
+                    </div>
+                    <div id="inputError" class="error-msg hidden" role="alert"></div>
+                </div>
+            </section>
+
+            <!-- Sidebar: Connection & Metrics -->
+            <aside class="sidebar-grid">
+                <section class="connection-panel">
+                    <div class="section-title">Environment</div>
+                    <div class="details-grid">
+                        <div class="detail-item">
+                            <span class="label">Server</span>
+                            <span class="value">Localhost</span>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="metrics-panel">
+                    <div class="section-title">Telemetry</div>
+
+                    <div class="metrics-group">
+                        <span class="group-label">Performance</span>
+                        <div class="metrics-grid">
+                            <div class="metric-card">
+                                <div class="card-icon">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 18h16a2 2 0 0 0 1.73-1.8z"/><line x1="12" y1="18" x2="12" y2="12"/></svg>
+                                </div>
+                                <div class="card-info">
+                                    <span class="label">Min</span>
+                                    <span id="metricMin" class="value">--</span>
+                                </div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="card-icon">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20v-6M6 20V10M18 20V4"/></svg>
+                                </div>
+                                <div class="card-info">
+                                    <span class="label">Max</span>
+                                    <span id="metricMax" class="value">--</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="metrics-group">
+                        <span class="group-label">Stability</span>
+                        <div class="metrics-grid">
+                            <div class="metric-card">
+                                <div class="card-icon">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="m17 17-5 5-5-5"/></svg>
+                                </div>
+                                <div class="card-info">
+                                    <span class="label">Loss</span>
+                                    <span id="metricLoss" class="value">--</span>
+                                </div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="card-icon">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>
+                                </div>
+                                <div class="card-info">
+                                    <span class="label">Status</span>
+                                    <span id="metricStatus" class="value status-neutral">Idle</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </aside>
+
+            <!-- History Section -->
+            <section class="history-panel">
+                <div class="history-card">
+                    <div class="card-header">
+                        <div class="header-left">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                            <h3>Latency History Log</h3>
+                        </div>
+                        <button id="refreshBtn" class="btn-ghost">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 15v5h5"/></svg>
+                            Refresh
+                        </button>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="latencyChart"></canvas>
+                    </div>
+                    <div class="table-wrapper">
+                        <table id="historyTable">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Target</th>
+                                    <th>Avg Latency</th>
+                                    <th>Loss</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                        <div id="historyEmpty" class="empty-state">
+                            <p>No records found. Run a test to see data.</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+    <script src="js/app.js"></script>
+</body>
+</html>
