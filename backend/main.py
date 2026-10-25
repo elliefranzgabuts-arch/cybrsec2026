@@ -4,9 +4,11 @@ from collections import deque
 from datetime import datetime
 import json
 import os
-from .network_monitor import run_ping, run_ping_concurrently
+from .network_monitor import run_ping, run_ping_concurrently, run_tracepath
 
-app = Flask(__name__)
+app = Flask(__name__,
+    static_folder='../frontend',
+    static_url_path='')
 CORS(app)
 
 # In-memory history capped at 100 results
@@ -75,6 +77,32 @@ def measure_all():
 @app.route('/api/history', methods=['GET'])
 def get_history():
     return jsonify(list(history)[::-1]), 200
+
+@app.route('/api/trace', methods=['POST'])
+def trace():
+    data = request.get_json()
+    if not data or 'target' not in data:
+        return jsonify({"error": "Missing 'target' in request body"}), 400
+
+    target = data['target']
+
+    try:
+        hops, is_complete = run_tracepath(target)
+        return jsonify({
+            "target": target,
+            "hops": hops,
+            "complete": is_complete
+        }), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
+    except Exception:
+        return jsonify({"error": "An unexpected error occurred during route discovery"}), 500
+
+@app.route('/')
+def index():
+    return app.send_static_file('index.html')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

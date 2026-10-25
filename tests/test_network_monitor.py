@@ -83,12 +83,13 @@ class TestNetworkMonitor(unittest.TestCase):
         # Mock unexpected output format
         mock_run.return_value = MagicMock(
             stdout="Something went wrong with ping",
+            stderr="",
             returncode=1
         )
-        # The parser should default to 100% loss if "packet loss" string is missing
-        res = run_ping("8.8.8.8")
-        self.assertEqual(res['packet_loss'], 100.0)
-        self.assertIsNone(res['latency_avg'])
+        # The parser should now raise RuntimeError instead of defaulting to 100% loss
+        with self.assertRaises(RuntimeError) as cm:
+            run_ping("8.8.8.8")
+        self.assertIn("Ping measurement failed", str(cm.exception))
 
     @patch('subprocess.run')
     def test_run_ping_concurrently_success(self, mock_run):
@@ -130,14 +131,83 @@ class TestNetworkMonitor(unittest.TestCase):
 
     @patch('subprocess.run')
     def test_run_ping_concurrently_total_failure(self, mock_run):
-        # Mock total failure (ping utility missing)
         mock_run.side_effect = FileNotFoundError
         targets = ["8.8.8.8", "1.1.1.1"]
+
         results = run_ping_concurrently(targets)
+
         self.assertEqual(len(results), 2)
-        for res in results:
-            self.assertEqual(res['packet_loss'], 100.0)
-            self.assertIn('error', res)
+        for result in results:
+            self.assertEqual(result['packet_loss'], 100.0)
+            self.assertIn('error', result)
+
+    @patch('subprocess.run')
+    def test_run_tracepath_parsing(self, mock_run):
+        # Mock a tracepath output with various formats
+        mock_run.return_value = MagicMock(
+            stdout=(
+                "1: (192.168.1.1)  0.5 ms\n"
+                "2: 10.0.0.1 2.1 ms\n"
+                "3: * * *\n"
+                "4: (8.8.8.8) 15.2 ms\n"
+                "5: invalid-ip 10.0 ms\n"
+                "6: 2001:4860:4860::8888 20.1 ms"
+            ),
+            returncode=0
+        )
+
+        from backend.network_monitor import run_tracepath
+        results, complete = run_tracepath("google.com")
+
+        self.assertTrue(complete)
+        self.assertEqual(len(results), 6)
+        # Hop 1: Parenthesized private
+        self.assertEqual(results[0]['ip'], "192.168.1.1")
+        self.assertEqual(results[0]['type'], "private")
+        # Hop 2: Plain private
+        self.assertEqual(results[1]['ip'], "10.0.0.1")
+        self.assertEqual(results[1]['type'], "private")
+        # Hop 3: Timeout
+        self.assertEqual(results[2]['type'], "timeout")
+        self.assertIsNone(results[2]['ip'])
+        # Hop 4: Parenthesized public
+        self.assertEqual(results[3]['ip'], "8.8.8.8")
+        self.assertEqual(results[3]['type'], "public")
+        # Hop 5: Invalid IP
+        self.assertEqual(results[4]['ip'], None)
+        self.assertEqual(results[4]['type'], "unknown")
+        # Hop 6: Plain IPv6 public
+        self.assertEqual(results[5]['ip'], "2001:4860:4860::8888")
+        self.assertEqual(results[5]['type'], "public")
+
+    @patch('subprocess.run')
+    def test_run_tracepath_timeout_partial(self, mock_run):
+        # Mock TimeoutExpired. Note: stdout is a positional arg in TimeoutExpired
+        mock_run.side_effect = subprocess.TimeoutExpired(
+            cmd=['tracepath'],
+            timeout=15,
+            output="1: (192.168.1.1) 0.5 ms\n2: 10.0.0.1 2.1 ms\n3: *"
+        )
+
+        from backend.network_monitor import run_tracepath
+        results, complete = run_tracepath("google.com")
+
+        self.assertFalse(complete)
+        self.assertEqual(len(results), 3)
+        self.assertEqual(results[0]['ip'], "192.168.1.1")
+        self.assertEqual(results[2]['type'], "timeout")
+
+    @patch('subprocess.run')
+    def test_run_tracepath_no_valid_hops(self, mock_run):
+        mock_run.return_value = MagicMock(
+            stdout="Tracepath output without any valid hop lines",
+            stderr="",
+            returncode=0
+        )
+
+        from backend.network_monitor import run_tracepath
+        with self.assertRaisesRegex(RuntimeError, "no valid hops"):
+            run_tracepath("google.com")
 
 if __name__ == '__main__':
     unittest.main()

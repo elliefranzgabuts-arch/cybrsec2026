@@ -17,3 +17,6 @@ instance/
 .vscode/
 .idea/
 .DS_Store
+
+# NetPulse Config
+frontend/config.js

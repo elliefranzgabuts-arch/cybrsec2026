@@ -6,9 +6,20 @@ const API_BASE_URL = 'http://127.0.0.1:5000';
 const elements = {
     targetInput: document.getElementById('targetInput'),
     measureBtn: document.getElementById('measureBtn'),
+    traceBtn: document.getElementById('traceBtn'),
     btnContent: document.querySelector('.btn-content'),
     spinner: document.querySelector('.spinner'),
     inputError: document.getElementById('inputError'),
+
+    // Monitoring Controls
+    startMonBtn: document.getElementById('startMonBtn'),
+    pauseMonBtn: document.getElementById('pauseMonBtn'),
+    resumeMonBtn: document.getElementById('resumeMonBtn'),
+    lastChecked: document.getElementById('lastChecked'),
+
+    // Route Details
+    routeDetails: document.getElementById('routeDetails'),
+    routeHopList: document.getElementById('routeHopList'),
 
     // Gauge elements
     gaugeValue: document.getElementById('metricLatency'),
@@ -26,9 +37,24 @@ const elements = {
     refreshBtn: document.getElementById('refreshBtn'),
 
     connectionStatus: document.getElementById('connectionStatus'),
+
+    // Map elements
+    worldMap: document.getElementById('worldMap'),
 };
 
 let latencyChart = null;
+let leafletMap = null;
+let markerLayer = null; // Initialize as null to avoid top-level L reference
+
+// Route state
+let activeRouteLine = null;
+let routeIndicator = null;
+let routeAnimationId = null;
+
+// Monitoring state
+let monitoringActive = false;
+let pollingTimer = null;
+const POLL_INTERVAL = 10000; // 10 seconds
 
 /**
  * Network Status Logic
@@ -38,15 +64,15 @@ let latencyChart = null;
  * - Unreachable: Packet loss >= 25% or total loss
  */
 function deriveStatus(packetLoss, latencyAvg) {
-    if (packetLoss === null || packetLoss === undefined) return { label: 'Idle', class: 'status-neutral' };
+    if (packetLoss === null || packetLoss === undefined) return { label: 'Idle', class: 'status-neutral', color: '#999999' };
 
     if (packetLoss >= 25) {
-        return { label: 'Unreachable', class: 'status-unreachable' };
+        return { label: 'Unreachable', class: 'status-unreachable', color: '#FF4545' };
     }
     if (packetLoss >= 10 || (latencyAvg && latencyAvg >= 150)) {
-        return { label: 'Degraded', class: 'status-degraded' };
+        return { label: 'Degraded', class: 'status-degraded', color: '#FBBF24' };
     }
-    return { label: 'Online', class: 'status-online' };
+    return { label: 'Online', class: 'status-online', color: '#50E3B2' };
 }
 
 /**
@@ -103,7 +129,8 @@ async function measureTarget(target) {
  */
 function updateGauge(latency) {
     if (latency === null) {
-        elements.gaugeProgress.style.strokeDashoffset = '251.3';
+        const arcLength = elements.gaugeProgress.getTotalLength();
+        elements.gaugeProgress.style.strokeDashoffset = arcLength.toString();
         elements.gaugeProgress.style.stroke = 'var(--text-secondary)';
         elements.gaugeValue.textContent = '--';
         return;
@@ -112,7 +139,9 @@ function updateGauge(latency) {
     const maxScale = 500;
     const clampedLatency = Math.min(latency, maxScale);
     const percentage = 1 - (clampedLatency / maxScale);
-    const offset = 251.3 * (1 - percentage);
+
+    const arcLength = elements.gaugeProgress.getTotalLength();
+    const offset = arcLength * (1 - percentage);
 
     elements.gaugeProgress.style.strokeDashoffset = offset;
     elements.gaugeValue.textContent = latency.toFixed(1);
@@ -156,12 +185,22 @@ function updateHistoryUI(history) {
         const row = document.createElement('tr');
         const date = new Date(m.timestamp).toLocaleTimeString();
 
-        row.innerHTML = `
-            <td>${date}</td>
-            <td>${m.target}</td>
-            <td>${m.latency_avg !== null ? m.latency_avg.toFixed(1) + ' ms' : 'N/A'}</td>
-            <td>${m.packet_loss !== null ? m.packet_loss.toFixed(1) + '%' : 'N/A'}</td>
-        `;
+        const cellTime = document.createElement('td');
+        cellTime.textContent = date;
+
+        const cellTarget = document.createElement('td');
+        cellTarget.textContent = m.target;
+
+        const cellLatency = document.createElement('td');
+        cellLatency.textContent = m.latency_avg !== null ? m.latency_avg.toFixed(1) + ' ms' : 'N/A';
+
+        const cellLoss = document.createElement('td');
+        cellLoss.textContent = m.packet_loss !== null ? m.packet_loss.toFixed(1) + '%' : 'N/A';
+
+        row.appendChild(cellTime);
+        row.appendChild(cellTarget);
+        row.appendChild(cellLatency);
+        row.appendChild(cellLoss);
         elements.historyTableBody.appendChild(row);
     });
 }
@@ -236,6 +275,7 @@ async function handleMeasure() {
         const result = await measureTarget(target);
         updateAllMetrics(result);
         await fetchHistory();
+        updateMarkerStatus(result);
     } catch (err) {
         showInputError(err.message);
     } finally {
@@ -245,6 +285,254 @@ async function handleMeasure() {
     }
 }
 
+async function handleTraceRoute() {
+    const target = elements.targetInput.value.trim();
+    if (!target) {
+        showInputError('Please enter a target host or IP.');
+        return;
+    }
+
+    elements.traceBtn.disabled = true;
+    const traceBtnContent = elements.traceBtn.querySelector('.btn-content');
+    const traceSpinner = elements.traceBtn.querySelector('.spinner');
+
+    traceBtnContent.classList.add('hidden');
+    traceSpinner.classList.remove('hidden');
+    elements.inputError.classList.add('hidden');
+
+    try {
+        const data = await apiRequest('/api/trace', {
+            method: 'POST',
+            body: JSON.stringify({ target })
+        });
+
+        renderRouteDetails(data.hops);
+        drawRouteOnMap(data.hops);
+    } catch (err) {
+        showInputError(err.message);
+    } finally {
+        elements.traceBtn.disabled = false;
+        traceBtnContent.classList.remove('hidden');
+        traceSpinner.classList.add('hidden');
+    }
+}
+
+/**
+ * Live Monitoring Logic
+ */
+async function performLivePoll() {
+    if (!monitoringActive) return;
+
+    try {
+        const results = await apiRequest('/api/measure-all', { method: 'POST' });
+
+        // Check again if monitoring is still active after the async request
+        if (!monitoringActive) return;
+
+        if (results && results.length > 0) {
+            // Use the first result to update the main gauge and telemetry
+            // since 'measure-all' returns a list.
+            const primary = results[0];
+            updateAllMetrics(primary);
+
+            // Update map markers with the full result set
+            updateMarkersFromResults(results);
+
+            // Update history and chart (using the primary or all)
+            await fetchHistory();
+
+            // Update last checked timestamp
+            const now = new Date();
+            elements.lastChecked.textContent = `Last checked: ${now.toLocaleTimeString()}`;
+            elements.lastChecked.classList.remove('hidden');
+        }
+    } catch (err) {
+        if (!monitoringActive) return;
+        console.error('Live polling failed:', err);
+        // We don't block the loop on a single failure, but we notify the user
+        showInputError('Live monitoring encountered a backend error.');
+    } finally {
+        // Schedule next poll only after the current one completes
+        if (monitoringActive) {
+            pollingTimer = setTimeout(performLivePoll, POLL_INTERVAL);
+        }
+    }
+}
+
+function startMonitoring() {
+    if (monitoringActive) return;
+
+    monitoringActive = true;
+    elements.startMonBtn.classList.add('hidden');
+    elements.pauseMonBtn.classList.remove('hidden');
+    elements.resumeMonBtn.classList.add('hidden');
+
+    performLivePoll();
+}
+
+function pauseMonitoring() {
+    monitoringActive = false;
+    if (pollingTimer) {
+        clearTimeout(pollingTimer);
+        pollingTimer = null;
+    }
+    elements.startMonBtn.classList.add('hidden');
+    elements.pauseMonBtn.classList.add('hidden');
+    elements.resumeMonBtn.classList.remove('hidden');
+}
+
+function resumeMonitoring() {
+    if (monitoringActive) return;
+
+    monitoringActive = true;
+    elements.startMonBtn.classList.add('hidden');
+    elements.pauseMonBtn.classList.remove('hidden');
+    elements.resumeMonBtn.classList.add('hidden');
+
+    performLivePoll();
+}
+
+/**
+ * World Map Logic
+ */
+async function initMap() {
+    // Safe check for Leaflet L
+    if (typeof L === 'undefined') {
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'map-error-overlay';
+        errorDiv.textContent = 'Leaflet library failed to load. Please check your connection.';
+        elements.worldMap.appendChild(errorDiv);
+        return;
+    }
+
+    const apiKey = (typeof MAPTILER_KEY !== 'undefined') ? MAPTILER_KEY : null;
+
+    if (!apiKey || apiKey === 'your_api_key_here') {
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'map-error-overlay';
+        errorDiv.textContent = 'Map configuration required. Please add your API key to config.js.';
+        elements.worldMap.appendChild(errorDiv);
+        return;
+    }
+
+    try {
+        leafletMap = L.map('worldMap', {
+            center: [12.8797, 121.7740],
+            zoom: 5.5,
+            zoomControl: false,
+            attributionControl: true
+        });
+
+        L.tileLayer(`https://api.maptiler.com/maps/satellite-v4/{z}/{x}/{y}.jpg?key=${apiKey}`, {
+            attribution: '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        }).addTo(leafletMap);
+
+        markerLayer = L.layerGroup();
+        markerLayer.addTo(leafletMap);
+        await loadMarkers();
+    } catch (err) {
+        console.error('Map initialization failed:', err);
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'map-error-overlay';
+        errorDiv.textContent = 'Failed to load map layer. Check API key and connection.';
+        elements.worldMap.appendChild(errorDiv);
+    }
+}
+
+async function loadMarkers() {
+    try {
+        const endpoints = await apiRequest('/api/endpoints');
+        markerLayer.clearLayers();
+
+        endpoints.forEach(ep => {
+            const status = deriveStatus(null, null); // Initial neutral state
+            const marker = L.circleMarker([ep.lat, ep.lon], {
+                radius: 6,
+                fillColor: status.color,
+                color: '#fff',
+                weight: 1,
+                opacity: 1,
+                fillOpacity: 0.8
+            }).addTo(markerLayer);
+
+            const popupContent = document.createElement('div');
+            popupContent.className = 'map-popup-content';
+
+            const title = document.createElement('span');
+            title.className = 'map-popup-title';
+            title.textContent = ep.name;
+
+            const details = document.createElement('span');
+            details.className = 'map-popup-details';
+            details.textContent = `${ep.target} - Approx: ${ep.lat}, ${ep.lon}`;
+
+            const actionBtn = document.createElement('button');
+            actionBtn.className = 'map-popup-action';
+            actionBtn.textContent = 'Select Endpoint';
+
+            actionBtn.addEventListener('click', () => {
+                elements.targetInput.value = ep.target;
+                elements.targetInput.focus();
+            });
+
+            popupContent.appendChild(title);
+            popupContent.appendChild(details);
+            popupContent.appendChild(actionBtn);
+
+            marker.bindPopup(popupContent);
+            marker.target = ep.target; // Store target for status updates
+
+            // Add a listener to update content when popup opens
+            marker.on('popupopen', () => {
+                if (marker.latestData) {
+                    const popup = marker.getPopup();
+                    const contentDiv = popup.getContent();
+                    const details = contentDiv.querySelector('.map-popup-details');
+                    if (details) {
+                        details.textContent = `${marker.latestData.latency} | Loss: ${marker.latestData.loss} | ${marker.latestData.timestamp}`;
+                    }
+                }
+            });
+        });
+    } catch (err) {
+        console.error('Failed to load markers:', err);
+    }
+}
+
+function updateMarkerStatus(measurement) {
+    if (!leafletMap || !markerLayer || !measurement.target) return;
+
+    markerLayer.eachLayer(marker => {
+        if (marker.target === measurement.target) {
+            const status = deriveStatus(measurement.packet_loss, measurement.latency_avg);
+            marker.setStyle({ fillColor: status.color });
+
+            // Store latest data on the marker object itself
+            marker.latestData = {
+                latency: measurement.latency_avg !== null ? `${measurement.latency_avg.toFixed(1)}ms` : 'N/A',
+                loss: measurement.packet_loss !== null ? `${measurement.packet_loss.toFixed(1)}%` : 'N/A',
+                timestamp: new Date().toLocaleTimeString()
+            };
+
+            // Update popup if it is currently open
+            const popup = marker.getPopup();
+            if (popup && popup.isOpen()) {
+                const contentDiv = popup.getContent();
+                const details = contentDiv.querySelector('.map-popup-details');
+                if (details) {
+                    details.textContent = `${marker.latestData.latency} | Loss: ${marker.latestData.loss} | ${marker.latestData.timestamp}`;
+                }
+            }
+        }
+    });
+}
+
+function updateMarkersFromResults(results) {
+    results.forEach(res => {
+        updateMarkerStatus(res);
+    });
+}
+
 async function init() {
     elements.measureBtn.addEventListener('click', handleMeasure);
     elements.refreshBtn.addEventListener('click', fetchHistory);
@@ -252,11 +540,17 @@ async function init() {
         if (e.key === 'Enter') handleMeasure();
     });
 
+    // Monitoring Event Listeners
+    elements.startMonBtn.addEventListener('click', startMonitoring);
+    elements.pauseMonBtn.addEventListener('click', pauseMonitoring);
+    elements.resumeMonBtn.addEventListener('click', resumeMonitoring);
+
     try {
         await fetch(`${API_BASE_URL}/api/history`);
         elements.connectionStatus.textContent = 'Connected';
         elements.connectionStatus.classList.add('connected');
         await fetchHistory();
+        await initMap();
     } catch (err) {
         elements.connectionStatus.textContent = 'Offline';
         elements.connectionStatus.classList.add('offline');
