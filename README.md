@@ -1,212 +1,262 @@
-NetPulse
+# NetPulse
 
-Network Monitoring and Diagnostic Tool
+### Network Monitoring and Diagnostic Tool
 
-NetPulse is a network monitoring and diagnostic application designed to help users test network connectivity, measure latency, inspect endpoint availability, and troubleshoot common network connection issues through a practical monitoring dashboard.
+NetPulse is a network monitoring and diagnostic application designed to help users test network connectivity, measure latency, monitor endpoint availability, and investigate common network connection issues through a centralized dashboard.
 
-The application combines a backend diagnostic service with a dark-themed user interface to make network testing and results easier to access and understand. It is being developed with a focus on useful diagnostic tools, clear result presentation, and reliable execution of network tests.
+The application combines a Python-based backend with a JavaScript-powered frontend to make network diagnostics more accessible and easier to understand. It focuses on practical monitoring tools, clear result presentation, diagnostic error handling, and continuous improvement of network testing reliability.
 
-Key Features
+**Submission Note:** This project is a late submission. Despite being submitted beyond the intended deadline, development and improvements remain ongoing as I continue refining its functionality, reliability, and overall user experience.
 
-* Network Connectivity Testing
-* Ping and Latency Measurement
-* Endpoint Monitoring
-* Network Diagnostic Dashboard
-* Traceroute Diagnostics (under development)
-* Network Test Execution
-* Diagnostic Result Display
-* Backend API Integration
-* Dedicated API Endpoints for Network Testing
-* Dark-Themed User Interface
-* Latency Gauge Visualization
-* Test Status and Error Reporting
+## Key Features
 
-Core Modules
+- **Network Connectivity Testing** — Checks whether a target host is reachable.
+- **Ping and Latency Measurement** — Measures network response times and presents latency results.
+- **Endpoint Monitoring** — Retrieves monitoring information for configured or supported endpoints.
+- **Network Diagnostic Dashboard** — Provides a centralized interface for running tests and reviewing results.
+- **Latency Gauge Visualization** — Displays latency measurements through a visual gauge.
+- **Traceroute Diagnostics** — Collects hop-by-hop network path information; reliability improvements are still in progress.
+- **Backend API Integration** — Connects frontend controls to backend diagnostic operations.
+- **Error and Timeout Handling** — Reports failures caused by unreachable destinations, unavailable commands, or execution timeouts.
+- **Diagnostic Result Display** — Presents available measurement results and status information.
+- **Automated Backend Testing** — Supports validation of important diagnostic behavior.
+- **Dark-Themed Interface** — Uses a dark dashboard design for network monitoring.
 
-Network Monitoring Dashboard
+## Core Modules
 
-The main dashboard provides an interface for running network diagnostics and reviewing their results.
+### 1. Network Monitoring Dashboard
 
-* Network testing controls
-* Latency measurement display
-* Visual latency gauge
-* Diagnostic status indicators
-* Organized presentation of test results
-* Clear feedback when a test fails or encounters an error
+The dashboard is the main interface for interacting with NetPulse and reviewing diagnostic results.
 
-Ping and Latency Testing
+- Network testing controls
+- Latency measurements and gauge visualization
+- Diagnostic status indicators
+- Organized presentation of test results
+- Feedback for successful, unsuccessful, or incomplete tests
 
-The ping module checks connectivity to a target and measures response times.
+### 2. Ping and Latency Testing
 
-* Network reachability checks
-* Response time measurement
-* Latency result reporting
-* Connection failure detection
-* Backend-powered diagnostic execution
+The measurement module checks connectivity to a specified target and collects response-time information through backend diagnostic operations.
 
-Endpoint Monitoring
+- Host reachability checks
+- Response-time measurement
+- Latency result processing
+- Connection failure reporting
+- Backend-powered test execution
 
-The endpoint monitoring module allows the application to check configured or supported endpoints and retrieve their monitoring results.
+### 3. Endpoint Monitoring
 
-* Endpoint checking
-* Endpoint availability results
-* Backend API integration
-* Diagnostic feedback for failed checks
+The endpoint monitoring module retrieves monitoring information for configured or supported network endpoints.
 
-Traceroute Diagnostics
+- Endpoint availability checks
+- Monitoring result retrieval
+- Backend API integration
+- Diagnostic feedback for unsuccessful checks
 
-The traceroute module is intended to help inspect the network path between the local system and a destination.
+### 4. Traceroute Diagnostics
 
-* Network path inspection
-* Hop-by-hop diagnostic results
-* Trace execution through backend services
-* Timeout and diagnostic error handling
+The traceroute module is designed to inspect the network path between the local system and a destination by collecting information about intermediate network hops.
 
-This module is still being refined to improve command execution, timeout handling, hop collection, and reliability across supported environments.
+- Hop-by-hop diagnostic results
+- Network path inspection
+- Backend execution of traceroute-related commands
+- Timeout and command error handling
+- Processing of partial or incomplete trace results
 
-Backend API
+**Development Status:** Traceroute reliability and result handling are still being refined. Behavior may vary depending on command availability, network conditions, destination reachability, and the local environment.
 
-The backend handles network diagnostic operations and provides API endpoints for the frontend.
+### 5. Backend API
 
-* Network measurement through "/api/measure"
-* Endpoint monitoring through "/api/endpoints"
-* Network tracing through "/api/trace"
-* Diagnostic execution and result processing
-* API response and error handling
+The backend handles diagnostic execution, processes measurement results, and provides API endpoints for frontend requests.
 
-Technology Stack
+## Technology Stack
 
-The following technologies are based on the current project implementation. Exact dependencies and versions should be verified against the project files.
+### Frontend
+- HTML
+- CSS
+- JavaScript
+- Chart.js for chart visualization, where used
+- Leaflet for map functionality, where used
 
-Frontend
+### Backend
+- Python
+- Flask
+- REST API endpoints
+- Subprocess-based diagnostic command execution
+- Timeout and error handling
 
-* Dashboard interface
-* HTML and CSS
-* JavaScript
-* Responsive interface components
+### Network Diagnostics
+- Ping-based connectivity testing
+- Latency measurement
+- Endpoint monitoring
+- Traceroute or tracepath-based network path inspection
 
-Backend
+### Development Tools
+- Git
+- GitHub
+- Visual Studio Code
+- Linux development environment
+- Python automated testing tools
 
-* Python
-* Network diagnostic command execution
-* REST API endpoints
-* Subprocess management
-* Timeout and error handling
+*Exact dependency versions should be verified against the project's dependency files.*
 
-Network Diagnostics
+## API Endpoints
 
-* Ping-based connectivity testing
-* Latency measurement
-* Endpoint checks
-* Traceroute or tracepath-based network path inspection
+NetPulse provides backend endpoints for its network diagnostic and monitoring features.
 
-Tools and Development
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/endpoints` | Retrieves endpoint monitoring information. |
+| `POST` | `/api/measure` | Executes a network measurement. |
+| `POST` | `/api/measure-all` | Runs measurements across supported endpoints. |
+| `POST` | `/api/trace` | Executes network path diagnostics. |
+| `GET` | `/api/history` | Retrieves available measurement history. |
 
-* Git
-* GitHub
-* Visual Studio Code
-* Linux development environment
+The listed methods reflect the current project notes and should be confirmed against the backend implementation. Request parameters, response formats, and error codes depend on the implemented API behavior.
 
-API Endpoints
-
-NetPulse provides backend endpoints for its network diagnostic features.
-
-Endpoint| Purpose
-"/api/measure"| Runs network measurements and returns diagnostic results.
-"/api/endpoints"| Provides endpoint monitoring results.
-"/api/trace"| Runs network path diagnostics using traceroute-related functionality.
-
-The exact request parameters, response fields, and HTTP methods depend on the current backend implementation.
-
-Project Structure
+## Project Structure
 
 The project is organized into frontend and backend components.
 
-NetPulse/
+```text
+cybersec2026/
 ├── backend/
-│   ├── API modules
-│   ├── Network diagnostic logic
-│   └── Backend tests
-│
+│   ├── main.py
+│   ├── network_monitor.py
+│   └── monitoring_endpoints.json
 ├── frontend/
-│   ├── Dashboard interface
-│   ├── Styling and components
-│   └── Frontend assets
-│
-├── README.md
+│   ├── index.html
+│   ├── config.js
+│   ├── css/
+│   │   └── style.css
+│   └── js/
+│       └── app.js
 └── ...
+```
 
-Note: This is a conceptual overview. Replace it with the actual directory and file names from the repository.
+This structure reflects the known project files and may change as development continues.
 
-System Architecture
+## System Architecture
 
-NetPulse separates the dashboard interface from the backend diagnostic operations.
+NetPulse separates the user interface from backend diagnostic operations.
 
+```text
 User
- │
- ▼
-NetPulse Dashboard
- │
- ▼
-Backend API
- │
- ├── /api/measure
- │
- ├── /api/endpoints
- │
- └── /api/trace
- │
- ▼
-Network Diagnostic Operations
- │
- ▼
-Processed Results
- │
- ▼
-Dashboard Display
+  |
+  v
+Frontend Dashboard
+  |
+  v
+Backend API (Flask)
+  |
+  +--> Network Measurement
+  |
+  +--> Endpoint Monitoring
+  |
+  +--> Traceroute Diagnostics
+  |
+  v
+Processed Diagnostic Results
+  |
+  v
+Dashboard Updates
+```
 
-The frontend sends requests to the backend, which executes the relevant diagnostic operation and returns the results for presentation in the dashboard.
+The frontend sends requests to the backend, which executes the requested diagnostic operation and returns the available results. The frontend then presents the results through dashboard components.
 
-Error Handling and Reliability
+## Error Handling and Reliability
 
-Network diagnostic operations can fail because of unreachable hosts, unavailable commands, permission restrictions, or execution timeouts.
+Network diagnostics may fail because of unreachable destinations, unavailable system commands, network restrictions, or execution timeouts.
 
-NetPulse is being developed to handle these situations through:
+NetPulse is being developed to handle these conditions through:
 
-* Backend error handling
-* Diagnostic execution timeouts
-* API error responses
-* Clear reporting of unsuccessful tests
-* Validation of diagnostic results
-* Automated tests for important backend functionality
+- Input and target validation
+- Backend exception handling
+- Diagnostic command timeouts
+- API error responses
+- Reporting of unsuccessful or incomplete tests
+- Diagnostic output processing
+- Automated tests for important backend behavior
 
-These measures help make diagnostic results more dependable and make troubleshooting easier when a test cannot be completed.
+These measures aim to improve the reliability of diagnostic operations and make failures easier to investigate.
 
-Testing
+## Testing
 
-Backend tests are used to validate important diagnostic behavior and help prevent regressions during development.
+Automated backend tests help validate diagnostic behavior and reduce the risk of regressions as the application evolves.
 
-Testing focuses on areas such as:
+Testing areas include:
 
-* Network measurement behavior
-* API endpoint responses
-* Diagnostic command execution
-* Timeout handling
-* Error conditions
-* Traceroute result processing
+- Network measurement behavior
+- API endpoint responses
+- Diagnostic command execution
+- Timeout and error handling
+- Traceroute output parsing
+- Handling of incomplete diagnostic results
 
-Objective
+The current test status and coverage should be verified against the project's test suite.
+
+## Installation and Setup
+
+NetPulse is intended to run in a compatible Python environment with the required dependencies and network diagnostic utilities installed.
+
+1. Clone the repository.
+
+   ```bash
+   git clone https://github.com/elliefranzgabuts-arch/cybrsec2026.git
+   ```
+
+2. Navigate to the project directory.
+
+   ```bash
+   cd cybrsec2026
+   ```
+
+3. Create and activate a Python virtual environment.
+
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
+
+4. Install the project's Python dependencies using its dependency file, if provided.
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+5. Ensure the required network diagnostic utilities are installed and available in the system's `PATH`.
+
+6. Start the backend using the project's configured entry point.
+
+   ```bash
+   python3 -m backend.main
+   ```
+
+The actual setup requirements may vary depending on the current project configuration. If a `requirements.txt` file is not present, install dependencies according to the project's existing configuration rather than creating one from assumptions.
+
+## Project Objective
 
 The objective of NetPulse is to develop a practical network monitoring and diagnostic tool that makes connectivity testing and latency measurement easier to perform and understand.
 
-The project also provides hands-on experience in backend development, API integration, operating system command execution, network diagnostics, error handling, automated testing, and dashboard development.
+The project also provides hands-on experience in:
 
-NetPulse serves as an ongoing development project where diagnostic reliability, usability, and monitoring capabilities can continue to improve.
+- Python backend development
+- REST API integration
+- Frontend development
+- Operating system command execution
+- Network diagnostics
+- Error handling and timeout management
+- Automated testing
+- Git-based version control
 
-Development Status
+## Development Status
 
-NetPulse is an ongoing project. Core backend measurement and endpoint API functionality have been implemented, while traceroute reliability and other refinements remain under development.
+NetPulse is an ongoing development project. Core backend measurement and endpoint API functionality have been implemented, while traceroute reliability, diagnostic execution, and other refinements continue to be improved.
 
-Additional improvements may include more reliable diagnostic execution, clearer result visualization, expanded endpoint monitoring, and improved automated test coverage.
+Future improvements may include more reliable diagnostic execution, clearer result visualization, expanded endpoint monitoring, improved automated test coverage, and more detailed reporting of network issues.
 
-«The system is still in development.»
+The application is not presented as a finished or production-ready network monitoring platform. Its functionality and reliability will continue to be evaluated and improved throughout development.
+
+---
+
+*The system is still in development.*
