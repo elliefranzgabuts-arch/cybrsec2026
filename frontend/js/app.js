@@ -306,7 +306,7 @@ async function handleTraceRoute() {
             body: JSON.stringify({ target })
         });
 
-        renderRouteDetails(data.hops);
+        renderRouteDetails(data.hops, data.complete);
         drawRouteOnMap(data.hops);
     } catch (err) {
         showInputError(err.message);
@@ -315,6 +315,62 @@ async function handleTraceRoute() {
         traceBtnContent.classList.remove('hidden');
         traceSpinner.classList.add('hidden');
     }
+}
+
+function renderRouteDetails(hops, complete) {
+    if (!elements.routeHopList || !elements.routeDetails) return;
+
+    elements.routeHopList.innerHTML = '';
+
+    if (!hops || hops.length === 0) {
+        const li = document.createElement('li');
+        li.textContent = 'No route data available.';
+        elements.routeHopList.appendChild(li);
+    } else {
+        // Group hops by hop number
+        const groups = {};
+        hops.forEach(hop => {
+            if (!groups[hop.hop]) groups[hop.hop] = [];
+            groups[hop.hop].push(hop);
+        });
+
+        // Sort hop numbers ascending
+        const sortedHopNums = Object.keys(groups).sort((a, b) => Number(a) - Number(b));
+
+        sortedHopNums.forEach(hopNum => {
+            const records = groups[hopNum];
+            const recordStrings = records.map(r => {
+                if (r.type === 'timeout') return '*** (no reply)';
+                const ip = r.ip || '***';
+                const lat = r.latency ? ` (${r.latency.toFixed(1)}ms)` : '';
+                return `${ip}${lat}`;
+            });
+
+            const li = document.createElement('li');
+            li.textContent = `Hop ${hopNum}: ${recordStrings.join(', ')}`;
+            elements.routeHopList.appendChild(li);
+        });
+    }
+
+    // Completion Status
+    const statusLi = document.createElement('li');
+    statusLi.className = 'route-status-msg';
+    if (complete === true) {
+        statusLi.textContent = 'Trace completed successfully.';
+    } else if (complete === false) {
+        statusLi.textContent = 'Trace incomplete — showing partial results (timeout or early termination).';
+    } else {
+        statusLi.textContent = 'Trace status unknown.';
+    }
+    elements.routeHopList.appendChild(statusLi);
+
+    elements.routeDetails.classList.remove('hidden');
+}
+
+function drawRouteOnMap(hops) {
+    // Route visualization on the map is not supported by the available data
+    // as tracepath hops do not provide geographic coordinates.
+    console.log('Map route visualization skipped: No coordinates available in trace data.');
 }
 
 /**
@@ -535,6 +591,7 @@ function updateMarkersFromResults(results) {
 
 async function init() {
     elements.measureBtn.addEventListener('click', handleMeasure);
+    elements.traceBtn.addEventListener('click', handleTraceRoute);
     elements.refreshBtn.addEventListener('click', fetchHistory);
     elements.targetInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') handleMeasure();

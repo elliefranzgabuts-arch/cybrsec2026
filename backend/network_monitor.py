@@ -217,12 +217,12 @@ def _parse_tracepath_output(stdout):
 
 def run_tracepath(target, max_hops=20):
     """
-    Execute tracepath with non-blocking incremental stdout capture.
+    Execute tracepath and parse its output.
 
     Returns:
         (hops, is_complete)
 
-    Partial hop records are returned if the command times out, provided
+    If the command times out, partial hop records are returned provided
     at least one valid hop was captured.
     """
     if not validate_target(target):
@@ -236,6 +236,8 @@ def run_tracepath(target, max_hops=20):
         raise ValueError("max_hops must be an integer between 1 and 30.")
 
     cmd = [
+        "/usr/bin/stdbuf",
+        "-oL",
         "/usr/bin/tracepath",
         "-n",
         "-m",
@@ -243,119 +245,34 @@ def run_tracepath(target, max_hops=20):
         target,
     ]
 
+    timed_out = False
     try:
-        process = subprocess.Popen(
+        result = subprocess.run(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=15,
             shell=False,
         )
+        stdout_content = result.stdout
+        is_complete = (result.returncode == 0)
+    except subprocess.TimeoutExpired as e:
+        timed_out = True
+        stdout_content = e.stdout
+        if stdout_content is None:
+            stdout_content = ""
+        elif isinstance(stdout_content, bytes):
+            stdout_content = stdout_content.decode("utf-8", errors="replace")
+        is_complete = False
     except FileNotFoundError:
         raise RuntimeError("The 'tracepath' utility is not installed.")
     except OSError:
         raise RuntimeError("Unable to start the tracepath utility.")
+    except Exception:
+        raise RuntimeError("An unexpected error occurred during route discovery.")
 
-    stdout_lines = []
-    buffer = bytearray()
-    deadline = time.monotonic() + 15
-    timed_out = False
-    eof = False
-
-    def consume(chunk):
-        """Save complete lines while retaining an incomplete final line."""
-        buffer.extend(chunk)
-
-        while b"\n" in buffer:
-            line, remainder = buffer.split(b"\n", 1)
-            stdout_lines.append(
-                line.decode("utf-8", errors="replace")
-            )
-            buffer[:] = remainder
-
-    def drain_available(fd):
-        """Read currently available data without blocking."""
-        nonlocal eof
-
-        while not eof:
-            try:
-                chunk = os.read(fd, 4096)
-            except BlockingIOError:
-                break
-
-            if not chunk:
-                eof = True
-                break
-
-            consume(chunk)
-
-    try:
-        fd = process.stdout.fileno()
-        os.set_blocking(fd, False)
-
-        while not eof:
-            remaining = deadline - time.monotonic()
-
-            if remaining <= 0:
-                timed_out = True
-                break
-
-            readable, _, _ = select.select(
-                [fd],
-                [],
-                [],
-                min(0.1, remaining),
-            )
-
-            if readable:
-                drain_available(fd)
-
-            # EOF is needed before leaving the read loop. A child may exit
-            # while unread pipe data remains, so keep draining it.
-
-        if timed_out and process.poll() is None:
-            process.terminate()
-
-            try:
-                process.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-        else:
-            process.wait()
-
-        # Read any bytes remaining in the pipe after process termination.
-        # The descriptor remains non-blocking, so this cannot wait for data.
-        drain_available(fd)
-
-        if buffer:
-            stdout_lines.append(
-                buffer.decode("utf-8", errors="replace")
-            )
-            buffer.clear()
-
-        is_complete = (
-            not timed_out
-            and eof
-            and process.returncode == 0
-        )
-
-    except (OSError, ValueError, subprocess.SubprocessError):
-        if process.poll() is None:
-            process.terminate()
-
-            try:
-                process.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-
-        raise RuntimeError(
-            "An unexpected error occurred during route discovery."
-        )
-    finally:
-        process.stdout.close()
-
-    hops = _parse_tracepath_output("\n".join(stdout_lines))
+    hops = _parse_tracepath_output(stdout_content)
 
     if not hops:
         if timed_out:
