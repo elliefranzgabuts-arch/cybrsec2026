@@ -370,7 +370,19 @@ function renderRouteDetails(hops, complete) {
 function drawRouteOnMap(hops) {
     // Route visualization on the map is not supported by the available data
     // as tracepath hops do not provide geographic coordinates.
-    console.log('Map route visualization skipped: No coordinates available in trace data.');
+    if (elements.routeHopList) {
+        // Remove any existing map-note to prevent duplicates
+        const existingNote = elements.routeHopList.querySelector('.map-note');
+        if (existingNote) existingNote.remove();
+
+        const infoLi = document.createElement('li');
+        infoLi.className = 'map-note';
+        infoLi.style.color = 'var(--muted)';
+        infoLi.style.fontStyle = 'italic';
+        infoLi.style.marginTop = '8px';
+        infoLi.textContent = 'Note: Geographic map visualization is unavailable for this route.';
+        elements.routeHopList.appendChild(infoLi);
+    }
 }
 
 /**
