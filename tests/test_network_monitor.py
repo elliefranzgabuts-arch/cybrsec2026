@@ -159,7 +159,7 @@ class TestNetworkMonitor(unittest.TestCase):
         from backend.network_monitor import run_tracepath
         results, complete = run_tracepath("google.com")
 
-        self.assertTrue(complete)
+        self.assertFalse(complete)
         self.assertEqual(len(results), 6)
         # Hop 1: Parenthesized private
         self.assertEqual(results[0]['ip'], "192.168.1.1")

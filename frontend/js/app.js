@@ -1,8 +1,10 @@
 const API_BASE_URL = 'http://127.0.0.1:5000';
 
-/**
- * UI state and elements
- */
+/* =========================================================
+   NETPULSE - FRONTEND APPLICATION
+   ========================================================= */
+
+/* DOM Elements */
 const elements = {
     targetInput: document.getElementById('targetInput'),
     measureBtn: document.getElementById('measureBtn'),
@@ -11,309 +13,616 @@ const elements = {
     spinner: document.querySelector('.spinner'),
     inputError: document.getElementById('inputError'),
 
-    // Monitoring Controls
     startMonBtn: document.getElementById('startMonBtn'),
     pauseMonBtn: document.getElementById('pauseMonBtn'),
     resumeMonBtn: document.getElementById('resumeMonBtn'),
     lastChecked: document.getElementById('lastChecked'),
 
-    // Route Details
     routeDetails: document.getElementById('routeDetails'),
     routeHopList: document.getElementById('routeHopList'),
 
-    // Gauge elements
     gaugeValue: document.getElementById('metricLatency'),
     gaugeProgress: document.getElementById('gaugeProgress'),
 
-    // Metric cards
     metricMin: document.getElementById('metricMin'),
     metricMax: document.getElementById('metricMax'),
     metricLoss: document.getElementById('metricLoss'),
     metricStatus: document.getElementById('metricStatus'),
 
-    // History elements
     historyTableBody: document.querySelector('#historyTable tbody'),
     historyEmpty: document.getElementById('historyEmpty'),
     refreshBtn: document.getElementById('refreshBtn'),
 
     connectionStatus: document.getElementById('connectionStatus'),
-
-    // Map elements
     worldMap: document.getElementById('worldMap'),
 };
 
 let latencyChart = null;
 let leafletMap = null;
-let markerLayer = null; // Initialize as null to avoid top-level L reference
+let markerLayer = null;
 
-// Route state
-let activeRouteLine = null;
-let routeIndicator = null;
-let routeAnimationId = null;
-
-// Monitoring state
 let monitoringActive = false;
 let pollingTimer = null;
-const POLL_INTERVAL = 10000; // 10 seconds
+let errorTimer = null;
 
-/**
- * Network Status Logic
- * Thresholds:
- * - Online: Packet loss < 10% and latency < 150ms
- * - Degraded: Packet loss < 25% OR latency >= 150ms
- * - Unreachable: Packet loss >= 25% or total loss
- */
-function deriveStatus(packetLoss, latencyAvg) {
-    if (packetLoss === null || packetLoss === undefined) return { label: 'Idle', class: 'status-neutral', color: '#999999' };
+const POLL_INTERVAL = 10000;
+const MAX_LATENCY = 500;
 
-    if (packetLoss >= 25) {
-        return { label: 'Unreachable', class: 'status-unreachable', color: '#FF4545' };
+/* =========================================================
+   HELPERS
+   ========================================================= */
+
+function toNumber(value) {
+    if (
+        value === null ||
+        value === undefined ||
+        value === ''
+    ) {
+        return null;
     }
-    if (packetLoss >= 10 || (latencyAvg && latencyAvg >= 150)) {
-        return { label: 'Degraded', class: 'status-degraded', color: '#FBBF24' };
-    }
-    return { label: 'Online', class: 'status-online', color: '#50E3B2' };
+
+    const number = Number(value);
+
+    return Number.isFinite(number) ? number : null;
 }
 
-/**
- * API Functions
- */
+function formatLatency(value) {
+    const number = toNumber(value);
+
+    return number === null
+        ? 'N/A'
+        : `${number.toFixed(1)} ms`;
+}
+
+function formatPacketLoss(value) {
+    const number = toNumber(value);
+
+    return number === null
+        ? 'N/A'
+        : `${number.toFixed(1)}%`;
+}
+
+function normalizeMeasurement(measurement) {
+    if (!measurement || typeof measurement !== 'object') {
+        return null;
+    }
+
+    return {
+        ...measurement,
+        latency_avg: toNumber(measurement.latency_avg),
+        latency_min: toNumber(measurement.latency_min),
+        latency_max: toNumber(measurement.latency_max),
+        packet_loss: toNumber(measurement.packet_loss),
+    };
+}
+
+/* =========================================================
+   NETWORK STATUS
+   ========================================================= */
+
+function deriveStatus(packetLoss, latencyAvg) {
+    const loss = toNumber(packetLoss);
+    const latency = toNumber(latencyAvg);
+
+    if (loss === null) {
+        return {
+            label: 'Idle',
+            class: 'status-neutral',
+            color: '#999999',
+        };
+    }
+
+    if (loss >= 25) {
+        return {
+            label: 'Unreachable',
+            class: 'status-unreachable',
+            color: '#FF4545',
+        };
+    }
+
+    if (loss >= 10 || (latency !== null && latency >= 150)) {
+        return {
+            label: 'Degraded',
+            class: 'status-degraded',
+            color: '#FBBF24',
+        };
+    }
+
+    return {
+        label: 'Online',
+        class: 'status-online',
+        color: '#50E3B2',
+    };
+}
+
+/* =========================================================
+   API REQUESTS
+   ========================================================= */
+
 async function apiRequest(endpoint, options = {}) {
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        ...options,
-        headers: {
-            'Content-Type': 'application/json',
-            ...options.headers,
-        },
-    });
+    let response;
+
+    try {
+        response = await fetch(`${API_BASE_URL}${endpoint}`, {
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers,
+            },
+        });
+    } catch (error) {
+        throw new Error(
+            'Cannot connect to the backend. Make sure Flask is running on port 5000.'
+        );
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    let data;
+
+    if (contentType.includes('application/json')) {
+        data = await response.json().catch(() => null);
+    } else {
+        data = await response.text().catch(() => '');
+    }
 
     if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        const message =
+            data && typeof data === 'object' && data.error
+                ? data.error
+                : `Request failed with HTTP ${response.status}.`;
+
+        throw new Error(message);
     }
 
-    return response.json();
+    if (data === null || typeof data !== 'object') {
+        throw new Error('The backend returned an invalid response.');
+    }
+
+    return data;
 }
 
-async function fetchHistory() {
+async function measureTarget(target) {
+    return apiRequest('/api/measure', {
+        method: 'POST',
+        body: JSON.stringify({ target }),
+    });
+}
+
+/* =========================================================
+   LATENCY GAUGE
+   ========================================================= */
+
+function updateGauge(latency) {
+    const gauge = elements.gaugeProgress;
+    const valueElement = elements.gaugeValue;
+
+    const value = toNumber(latency);
+
+    if (!gauge || !valueElement) {
+        console.error('Gauge elements are missing from the HTML.');
+        return;
+    }
+
+    let arcLength;
+
     try {
-        const history = await apiRequest('/api/history');
+        arcLength = gauge.getTotalLength();
+    } catch (error) {
+        console.error('Unable to calculate gauge length:', error);
+        return;
+    }
+
+    if (!Number.isFinite(arcLength) || arcLength <= 0) {
+        console.error('Invalid SVG gauge length.');
+        return;
+    }
+
+    gauge.style.strokeDasharray = `${arcLength} ${arcLength}`;
+    gauge.style.strokeLinecap = 'round';
+
+    if (value === null || value < 0) {
+        gauge.style.strokeDashoffset = String(arcLength);
+        gauge.style.stroke = 'var(--text-secondary, #777777)';
+        valueElement.textContent = '--';
+        return;
+    }
+
+    const clampedLatency = Math.min(value, MAX_LATENCY);
+    const ratio = clampedLatency / MAX_LATENCY;
+
+    /*
+     * The existing SVG gauge uses a dash offset to control
+     * how much of the semicircle is visible.
+     *
+     * 0 ms   = minimum offset
+     * 500 ms = maximum offset
+     */
+    const offset = arcLength * ratio;
+
+    gauge.style.strokeDashoffset = String(offset);
+    valueElement.textContent = value.toFixed(1);
+
+    if (value < 100) {
+        gauge.style.stroke = 'var(--color-success, #63F51B)';
+    } else if (value < 250) {
+        gauge.style.stroke = 'var(--accent-primary, #FF4545)';
+    } else {
+        gauge.style.stroke = 'var(--color-error, #FF4545)';
+    }
+}
+
+/* =========================================================
+   METRIC CARDS
+   ========================================================= */
+
+function updateAllMetrics(measurement) {
+    const data = normalizeMeasurement(measurement);
+
+    if (!data) {
+        console.error('Invalid measurement data:', measurement);
+        return;
+    }
+
+    updateGauge(data.latency_avg);
+
+    if (elements.metricMin) {
+        elements.metricMin.textContent =
+            formatLatency(data.latency_min);
+    }
+
+    if (elements.metricMax) {
+        elements.metricMax.textContent =
+            formatLatency(data.latency_max);
+    }
+
+    if (elements.metricLoss) {
+        elements.metricLoss.textContent =
+            formatPacketLoss(data.packet_loss);
+    }
+
+    const status = deriveStatus(
+        data.packet_loss,
+        data.latency_avg
+    );
+
+    if (elements.metricStatus) {
+        elements.metricStatus.textContent = status.label;
+        elements.metricStatus.className =
+            `value ${status.class}`;
+    }
+}
+
+/* =========================================================
+   HISTORY
+   ========================================================= */
+
+async function fetchHistory(options = {}) {
+    const updateMetrics = options.updateMetrics === true;
+
+    try {
+        const response = await apiRequest('/api/history');
+
+        const history = Array.isArray(response)
+            ? response
+            : Array.isArray(response.history)
+                ? response.history
+                : null;
+
+        if (!history) {
+            throw new Error('Invalid history response from backend.');
+        }
+
         updateHistoryUI(history);
         updateChart(history);
-        if (history.length > 0) {
+
+        /*
+         * Only initialize the dashboard metrics from history
+         * when explicitly requested. Normal refreshes must not
+         * overwrite a newer Run Test result.
+         */
+        if (updateMetrics && history.length > 0) {
             updateAllMetrics(history[0]);
         }
+
         return history;
-    } catch (err) {
-        console.error('Failed to fetch history:', err);
-        showInputError('Could not load history from server.');
+    } catch (error) {
+        console.error('Failed to fetch history:', error);
+
+        if (options.showError) {
+            showInputError('Could not load history from server.');
+        }
+
         return null;
     }
 }
 
-async function measureTarget(target) {
-    try {
-        return await apiRequest('/api/measure', {
-            method: 'POST',
-            body: JSON.stringify({ target }),
-        });
-    } catch (err) {
-        throw err;
-    }
-}
-
-/**
- * Gauge Visuals
- * Max scale: 500ms.
- * Offset 251.3 = 0% (left), 0 = 100% (right)
- */
-function updateGauge(latency) {
-    if (latency === null) {
-        const arcLength = elements.gaugeProgress.getTotalLength();
-        elements.gaugeProgress.style.strokeDashoffset = arcLength.toString();
-        elements.gaugeProgress.style.stroke = 'var(--text-secondary)';
-        elements.gaugeValue.textContent = '--';
-        return;
-    }
-
-    const maxScale = 500;
-    const clampedLatency = Math.min(latency, maxScale);
-    const percentage = 1 - (clampedLatency / maxScale);
-
-    const arcLength = elements.gaugeProgress.getTotalLength();
-    const offset = arcLength * (1 - percentage);
-
-    elements.gaugeProgress.style.strokeDashoffset = offset;
-    elements.gaugeValue.textContent = latency.toFixed(1);
-
-    // Theme-specific Color Logic (Signal Red Accents)
-    if (latency < 100) {
-        elements.gaugeProgress.style.stroke = 'var(--color-success)'; // Mint
-    } else if (latency < 250) {
-        elements.gaugeProgress.style.stroke = 'var(--accent-primary)'; // Signal Red
-    } else {
-        elements.gaugeProgress.style.stroke = 'var(--color-error)'; // Dark Red
-    }
-}
-
-function updateAllMetrics(measurement) {
-    const latency = measurement.latency_avg;
-    const loss = measurement.packet_loss;
-
-    updateGauge(latency);
-
-    elements.metricMin.textContent = measurement.latency_min !== null ? measurement.latency_min.toFixed(1) + 'ms' : 'N/A';
-    elements.metricMax.textContent = measurement.latency_max !== null ? measurement.latency_max.toFixed(1) + 'ms' : 'N/A';
-    elements.metricLoss.textContent = loss !== null ? loss.toFixed(1) + '%' : 'N/A';
-
-    const status = deriveStatus(loss, latency);
-    elements.metricStatus.textContent = status.label;
-    elements.metricStatus.className = `value ${status.class}`;
-}
-
 function updateHistoryUI(history) {
+    if (!elements.historyTableBody) return;
+
     elements.historyTableBody.innerHTML = '';
 
-    if (history.length === 0) {
-        elements.historyEmpty.classList.remove('hidden');
+    if (!Array.isArray(history) || history.length === 0) {
+        if (elements.historyEmpty) {
+            elements.historyEmpty.classList.remove('hidden');
+        }
         return;
     }
 
-    elements.historyEmpty.classList.add('hidden');
+    if (elements.historyEmpty) {
+        elements.historyEmpty.classList.add('hidden');
+    }
 
-    history.forEach(m => {
+    history.forEach((measurement) => {
         const row = document.createElement('tr');
-        const date = new Date(m.timestamp).toLocaleTimeString();
 
-        const cellTime = document.createElement('td');
-        cellTime.textContent = date;
+        const timeCell = document.createElement('td');
+        const targetCell = document.createElement('td');
+        const latencyCell = document.createElement('td');
+        const lossCell = document.createElement('td');
 
-        const cellTarget = document.createElement('td');
-        cellTarget.textContent = m.target;
+        const timestamp = measurement.timestamp
+            ? new Date(measurement.timestamp)
+            : null;
 
-        const cellLatency = document.createElement('td');
-        cellLatency.textContent = m.latency_avg !== null ? m.latency_avg.toFixed(1) + ' ms' : 'N/A';
+        timeCell.textContent =
+            timestamp && !Number.isNaN(timestamp.getTime())
+                ? timestamp.toLocaleTimeString()
+                : 'N/A';
 
-        const cellLoss = document.createElement('td');
-        cellLoss.textContent = m.packet_loss !== null ? m.packet_loss.toFixed(1) + '%' : 'N/A';
+        targetCell.textContent = measurement.target || 'Unknown';
+        latencyCell.textContent = formatLatency(measurement.latency_avg);
+        lossCell.textContent = formatPacketLoss(measurement.packet_loss);
 
-        row.appendChild(cellTime);
-        row.appendChild(cellTarget);
-        row.appendChild(cellLatency);
-        row.appendChild(cellLoss);
+        row.append(
+            timeCell,
+            targetCell,
+            latencyCell,
+            lossCell
+        );
+
         elements.historyTableBody.appendChild(row);
     });
 }
 
+/* =========================================================
+   LATENCY CHART
+   ========================================================= */
+
 function updateChart(history) {
-    const data = [...history].reverse();
-    const labels = data.map(m => new Date(m.timestamp).toLocaleTimeString());
-    const values = data.map(m => m.latency_avg);
+    const canvas = document.getElementById('latencyChart');
+
+    if (!canvas) {
+        console.warn('Latency chart canvas was not found.');
+        return;
+    }
+
+    if (typeof Chart === 'undefined') {
+        console.warn('Chart.js has not loaded.');
+        return;
+    }
+
+    const records = Array.isArray(history) ? [...history].reverse() : [];
+
+    const labels = records.map((measurement) => {
+        const timestamp = new Date(measurement.timestamp);
+
+        return Number.isNaN(timestamp.getTime())
+            ? ''
+            : timestamp.toLocaleTimeString();
+    });
+
+    const values = records.map((measurement) =>
+        toNumber(measurement.latency_avg)
+    );
 
     if (latencyChart) {
         latencyChart.data.labels = labels;
         latencyChart.data.datasets[0].data = values;
         latencyChart.update();
-    } else {
-        const ctx = document.getElementById('latencyChart').getContext('2d');
-        latencyChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: 'Avg Latency (ms)',
-                    data: values,
-                    borderColor: '#FF4545',
-                    backgroundColor: 'rgba(255, 69, 69, 0.1)',
-                    fill: true,
-                    tension: 0.4,
-                    pointRadius: 3,
-                    pointBackgroundColor: '#FF4545',
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        grid: { color: 'rgba(255, 255, 255, 0.05)' },
-                        ticks: { color: '#999999', font: { family: 'JetBrains Mono' }, callback: v => v + 'ms' }
-                    },
-                    x: {
-                        grid: { display: false },
-                        ticks: { color: '#999999', font: { family: 'JetBrains Mono' } }
-                    }
-                }
-            }
-        });
+        return;
     }
+
+    const context = canvas.getContext('2d');
+
+    if (!context) {
+        console.error('Unable to initialize chart context.');
+        return;
+    }
+
+    latencyChart = new Chart(context, {
+        type: 'line',
+
+        data: {
+            labels,
+
+            datasets: [{
+                label: 'Avg Latency (ms)',
+                data: values,
+                borderColor: '#FF4545',
+                backgroundColor: 'rgba(255, 69, 69, 0.1)',
+                fill: true,
+                tension: 0.3,
+                spanGaps: true,
+                pointRadius: 3,
+                pointBackgroundColor: '#FF4545',
+            }],
+        },
+
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+
+            plugins: {
+                legend: {
+                    display: false,
+                },
+            },
+
+            scales: {
+                y: {
+                    beginAtZero: true,
+
+                    grid: {
+                        color: 'rgba(255, 255, 255, 0.05)',
+                    },
+
+                    ticks: {
+                        color: '#999999',
+                        font: {
+                            family: 'JetBrains Mono',
+                        },
+                        callback: (value) => `${value} ms`,
+                    },
+                },
+
+                x: {
+                    grid: {
+                        display: false,
+                    },
+
+                    ticks: {
+                        color: '#999999',
+                        font: {
+                            family: 'JetBrains Mono',
+                        },
+                    },
+                },
+            },
+        },
+    });
 }
 
-function showInputError(msg) {
-    elements.inputError.textContent = msg;
+/* =========================================================
+   ERROR DISPLAY
+   ========================================================= */
+
+function showInputError(message) {
+    if (!elements.inputError) {
+        console.error(message);
+        return;
+    }
+
+    elements.inputError.textContent = message;
     elements.inputError.classList.remove('hidden');
-    setTimeout(() => {
+
+    if (errorTimer) {
+        clearTimeout(errorTimer);
+    }
+
+    errorTimer = setTimeout(() => {
         elements.inputError.classList.add('hidden');
+        errorTimer = null;
     }, 5000);
 }
 
+/* =========================================================
+   RUN TEST
+   ========================================================= */
+
 async function handleMeasure() {
+    if (!elements.targetInput || !elements.measureBtn) return;
+
     const target = elements.targetInput.value.trim();
+
     if (!target) {
         showInputError('Please enter a target host or IP.');
         return;
     }
 
     elements.measureBtn.disabled = true;
-    elements.btnContent.classList.add('hidden');
-    elements.spinner.classList.remove('hidden');
-    elements.inputError.classList.add('hidden');
+
+    if (elements.btnContent) {
+        elements.btnContent.classList.add('hidden');
+    }
+
+    if (elements.spinner) {
+        elements.spinner.classList.remove('hidden');
+    }
+
+    if (elements.inputError) {
+        elements.inputError.classList.add('hidden');
+    }
 
     try {
         const result = await measureTarget(target);
+
+        /*
+         * Update the dashboard immediately with the current
+         * measurement before requesting the history list.
+         */
         updateAllMetrics(result);
-        await fetchHistory();
         updateMarkerStatus(result);
-    } catch (err) {
-        showInputError(err.message);
+
+        /*
+         * Refresh only the history and chart.
+         * Do not allow history to replace the current reading.
+         */
+        await fetchHistory();
+    } catch (error) {
+        console.error('Measurement failed:', error);
+        showInputError(error.message || 'The network test failed.');
     } finally {
         elements.measureBtn.disabled = false;
-        elements.btnContent.classList.remove('hidden');
-        elements.spinner.classList.add('hidden');
+
+        if (elements.btnContent) {
+            elements.btnContent.classList.remove('hidden');
+        }
+
+        if (elements.spinner) {
+            elements.spinner.classList.add('hidden');
+        }
     }
 }
 
+/* =========================================================
+   TRACEROUTE
+   ========================================================= */
+
 async function handleTraceRoute() {
+    if (!elements.targetInput || !elements.traceBtn) return;
+
     const target = elements.targetInput.value.trim();
+
     if (!target) {
         showInputError('Please enter a target host or IP.');
         return;
     }
 
-    elements.traceBtn.disabled = true;
-    const traceBtnContent = elements.traceBtn.querySelector('.btn-content');
-    const traceSpinner = elements.traceBtn.querySelector('.spinner');
+    const button = elements.traceBtn;
+    const buttonContent = button.querySelector('.btn-content');
+    const buttonSpinner = button.querySelector('.spinner');
 
-    traceBtnContent.classList.add('hidden');
-    traceSpinner.classList.remove('hidden');
-    elements.inputError.classList.add('hidden');
+    button.disabled = true;
+
+    if (buttonContent) {
+        buttonContent.classList.add('hidden');
+    }
+
+    if (buttonSpinner) {
+        buttonSpinner.classList.remove('hidden');
+    }
 
     try {
         const data = await apiRequest('/api/trace', {
             method: 'POST',
-            body: JSON.stringify({ target })
+            body: JSON.stringify({ target }),
         });
 
         renderRouteDetails(data.hops, data.complete);
         drawRouteOnMap(data.hops);
-    } catch (err) {
-        showInputError(err.message);
+    } catch (error) {
+        console.error('Traceroute failed:', error);
+        showInputError(error.message || 'Traceroute failed.');
     } finally {
-        elements.traceBtn.disabled = false;
-        traceBtnContent.classList.remove('hidden');
-        traceSpinner.classList.add('hidden');
+        button.disabled = false;
+
+        if (buttonContent) {
+            buttonContent.classList.remove('hidden');
+        }
+
+        if (buttonSpinner) {
+            buttonSpinner.classList.add('hidden');
+        }
     }
 }
 
@@ -322,107 +631,148 @@ function renderRouteDetails(hops, complete) {
 
     elements.routeHopList.innerHTML = '';
 
-    if (!hops || hops.length === 0) {
-        const li = document.createElement('li');
-        li.textContent = 'No route data available.';
-        elements.routeHopList.appendChild(li);
+    if (!Array.isArray(hops) || hops.length === 0) {
+        const item = document.createElement('li');
+        item.textContent = 'No route data available.';
+        elements.routeHopList.appendChild(item);
     } else {
-        // Group hops by hop number
         const groups = {};
-        hops.forEach(hop => {
-            if (!groups[hop.hop]) groups[hop.hop] = [];
-            groups[hop.hop].push(hop);
+
+        hops.forEach((hop) => {
+            const hopNumber = hop.hop ?? '?';
+
+            if (!groups[hopNumber]) {
+                groups[hopNumber] = [];
+            }
+
+            groups[hopNumber].push(hop);
         });
 
-        // Sort hop numbers ascending
-        const sortedHopNums = Object.keys(groups).sort((a, b) => Number(a) - Number(b));
+        const sortedHopNumbers = Object.keys(groups).sort(
+            (a, b) => Number(a) - Number(b)
+        );
 
-        sortedHopNums.forEach(hopNum => {
-            const records = groups[hopNum];
-            const recordStrings = records.map(r => {
-                if (r.type === 'timeout') return '*** (no reply)';
-                const ip = r.ip || '***';
-                const lat = r.latency ? ` (${r.latency.toFixed(1)}ms)` : '';
-                return `${ip}${lat}`;
+        sortedHopNumbers.forEach((hopNumber) => {
+            const records = groups[hopNumber];
+
+            const descriptions = records.map((record) => {
+                if (record.type === 'timeout') {
+                    return '*** (no reply)';
+                }
+
+                const ip = record.ip || '***';
+                const latency = toNumber(record.latency);
+
+                return latency !== null
+                    ? `${ip} (${latency.toFixed(1)} ms)`
+                    : ip;
             });
 
-            const li = document.createElement('li');
-            li.textContent = `Hop ${hopNum}: ${recordStrings.join(', ')}`;
-            elements.routeHopList.appendChild(li);
+            const item = document.createElement('li');
+            item.textContent =
+                `Hop ${hopNumber}: ${descriptions.join(', ')}`;
+
+            elements.routeHopList.appendChild(item);
         });
     }
 
-    // Completion Status
-    const statusLi = document.createElement('li');
-    statusLi.className = 'route-status-msg';
-    if (complete === true) {
-        statusLi.textContent = 'Trace completed successfully.';
-    } else if (complete === false) {
-        statusLi.textContent = 'Trace incomplete — showing partial results (timeout or early termination).';
-    } else {
-        statusLi.textContent = 'Trace status unknown.';
-    }
-    elements.routeHopList.appendChild(statusLi);
+    const statusItem = document.createElement('li');
+    statusItem.className = 'route-status-msg';
 
+    if (complete === true) {
+        statusItem.textContent = 'Trace completed successfully.';
+    } else if (complete === false) {
+        statusItem.textContent =
+            'Trace incomplete — showing partial results (timeout or early termination).';
+    } else {
+        statusItem.textContent = 'Trace status unknown.';
+    }
+
+    elements.routeHopList.appendChild(statusItem);
     elements.routeDetails.classList.remove('hidden');
 }
 
-function drawRouteOnMap(hops) {
-    // Route visualization on the map is not supported by the available data
-    // as tracepath hops do not provide geographic coordinates.
-    if (elements.routeHopList) {
-        // Remove any existing map-note to prevent duplicates
-        const existingNote = elements.routeHopList.querySelector('.map-note');
-        if (existingNote) existingNote.remove();
+function drawRouteOnMap() {
+    /*
+     * The current traceroute response contains hop data,
+     * not geographic coordinates. Do not invent map positions.
+     */
+    if (!elements.routeHopList) return;
 
-        const infoLi = document.createElement('li');
-        infoLi.className = 'map-note';
-        infoLi.style.color = 'var(--muted)';
-        infoLi.style.fontStyle = 'italic';
-        infoLi.style.marginTop = '8px';
-        infoLi.textContent = 'Note: Geographic map visualization is unavailable for this route.';
-        elements.routeHopList.appendChild(infoLi);
+    const existingNote =
+        elements.routeHopList.querySelector('.map-note');
+
+    if (existingNote) {
+        existingNote.remove();
     }
+
+    const note = document.createElement('li');
+    note.className = 'map-note';
+    note.style.color = 'var(--muted, #999999)';
+    note.style.fontStyle = 'italic';
+    note.style.marginTop = '8px';
+
+    note.textContent =
+        'Note: Geographic map visualization is unavailable for this route.';
+
+    elements.routeHopList.appendChild(note);
 }
 
-/**
- * Live Monitoring Logic
- */
+/* =========================================================
+   LIVE MONITORING
+   ========================================================= */
+
 async function performLivePoll() {
     if (!monitoringActive) return;
 
     try {
-        const results = await apiRequest('/api/measure-all', { method: 'POST' });
+        const response = await apiRequest('/api/measure-all', {
+            method: 'POST',
+        });
 
-        // Check again if monitoring is still active after the async request
         if (!monitoringActive) return;
 
-        if (results && results.length > 0) {
-            // Use the first result to update the main gauge and telemetry
-            // since 'measure-all' returns a list.
-            const primary = results[0];
-            updateAllMetrics(primary);
+        const results = Array.isArray(response)
+            ? response
+            : Array.isArray(response.results)
+                ? response.results
+                : [];
 
-            // Update map markers with the full result set
+        if (results.length > 0) {
+            const primary = results[0];
+
+            updateAllMetrics(primary);
             updateMarkersFromResults(results);
 
-            // Update history and chart (using the primary or all)
+            /*
+             * Refresh historical records without overwriting
+             * the current live monitoring reading.
+             */
             await fetchHistory();
 
-            // Update last checked timestamp
-            const now = new Date();
-            elements.lastChecked.textContent = `Last checked: ${now.toLocaleTimeString()}`;
-            elements.lastChecked.classList.remove('hidden');
+            if (!monitoringActive) return;
+
+            if (elements.lastChecked) {
+                elements.lastChecked.textContent =
+                    `Last checked: ${new Date().toLocaleTimeString()}`;
+
+                elements.lastChecked.classList.remove('hidden');
+            }
         }
-    } catch (err) {
+    } catch (error) {
         if (!monitoringActive) return;
-        console.error('Live polling failed:', err);
-        // We don't block the loop on a single failure, but we notify the user
-        showInputError('Live monitoring encountered a backend error.');
+
+        console.error('Live monitoring failed:', error);
+
+        showInputError(
+            'Live monitoring encountered a backend error.'
+        );
     } finally {
-        // Schedule next poll only after the current one completes
         if (monitoringActive) {
-            pollingTimer = setTimeout(performLivePoll, POLL_INTERVAL);
+            pollingTimer = setTimeout(
+                performLivePoll,
+                POLL_INTERVAL
+            );
         }
     }
 }
@@ -431,198 +781,394 @@ function startMonitoring() {
     if (monitoringActive) return;
 
     monitoringActive = true;
-    elements.startMonBtn.classList.add('hidden');
-    elements.pauseMonBtn.classList.remove('hidden');
-    elements.resumeMonBtn.classList.add('hidden');
+
+    if (elements.startMonBtn) {
+        elements.startMonBtn.classList.add('hidden');
+    }
+
+    if (elements.pauseMonBtn) {
+        elements.pauseMonBtn.classList.remove('hidden');
+    }
+
+    if (elements.resumeMonBtn) {
+        elements.resumeMonBtn.classList.add('hidden');
+    }
 
     performLivePoll();
 }
 
 function pauseMonitoring() {
     monitoringActive = false;
+
     if (pollingTimer) {
         clearTimeout(pollingTimer);
         pollingTimer = null;
     }
-    elements.startMonBtn.classList.add('hidden');
-    elements.pauseMonBtn.classList.add('hidden');
-    elements.resumeMonBtn.classList.remove('hidden');
+
+    if (elements.startMonBtn) {
+        elements.startMonBtn.classList.add('hidden');
+    }
+
+    if (elements.pauseMonBtn) {
+        elements.pauseMonBtn.classList.add('hidden');
+    }
+
+    if (elements.resumeMonBtn) {
+        elements.resumeMonBtn.classList.remove('hidden');
+    }
 }
 
 function resumeMonitoring() {
     if (monitoringActive) return;
 
     monitoringActive = true;
-    elements.startMonBtn.classList.add('hidden');
-    elements.pauseMonBtn.classList.remove('hidden');
-    elements.resumeMonBtn.classList.add('hidden');
+
+    if (elements.startMonBtn) {
+        elements.startMonBtn.classList.add('hidden');
+    }
+
+    if (elements.pauseMonBtn) {
+        elements.pauseMonBtn.classList.remove('hidden');
+    }
+
+    if (elements.resumeMonBtn) {
+        elements.resumeMonBtn.classList.add('hidden');
+    }
 
     performLivePoll();
 }
 
-/**
- * World Map Logic
- */
+/* =========================================================
+   MAP INITIALIZATION
+   ========================================================= */
+
 async function initMap() {
-    // Safe check for Leaflet L
+    if (!elements.worldMap) return;
+
     if (typeof L === 'undefined') {
-        const errorDiv = document.createElement('div');
-        errorDiv.className = 'map-error-overlay';
-        errorDiv.textContent = 'Leaflet library failed to load. Please check your connection.';
-        elements.worldMap.appendChild(errorDiv);
+        showMapMessage(
+            'Leaflet library failed to load. Please check your connection.'
+        );
         return;
     }
 
-    const apiKey = (typeof MAPTILER_KEY !== 'undefined') ? MAPTILER_KEY : null;
+    const apiKey =
+        typeof MAPTILER_KEY !== 'undefined'
+            ? MAPTILER_KEY
+            : null;
 
     if (!apiKey || apiKey === 'your_api_key_here') {
-        const errorDiv = document.createElement('div');
-        errorDiv.className = 'map-error-overlay';
-        errorDiv.textContent = 'Map configuration required. Please add your API key to config.js.';
-        elements.worldMap.appendChild(errorDiv);
+        showMapMessage(
+            'Map configuration required. Please add your API key to config.js.'
+        );
         return;
     }
 
     try {
         leafletMap = L.map('worldMap', {
             center: [12.8797, 121.7740],
-            zoom: 5.5,
+            zoom: 5,
             zoomControl: false,
-            attributionControl: true
+            attributionControl: true,
         });
 
-        L.tileLayer(`https://api.maptiler.com/maps/satellite-v4/{z}/{x}/{y}.jpg?key=${apiKey}`, {
-            attribution: '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        }).addTo(leafletMap);
+        L.tileLayer(
+            `https://api.maptiler.com/maps/satellite-v4/{z}/{x}/{y}.jpg?key=${apiKey}`,
+            {
+                attribution:
+                    '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a> ' +
+                    '&copy; <a href="https://www.openstreetmap.org/copyright">' +
+                    'OpenStreetMap</a> contributors',
+            }
+        ).addTo(leafletMap);
 
-        markerLayer = L.layerGroup();
-        markerLayer.addTo(leafletMap);
+        markerLayer = L.layerGroup().addTo(leafletMap);
+
         await loadMarkers();
-    } catch (err) {
-        console.error('Map initialization failed:', err);
-        const errorDiv = document.createElement('div');
-        errorDiv.className = 'map-error-overlay';
-        errorDiv.textContent = 'Failed to load map layer. Check API key and connection.';
-        elements.worldMap.appendChild(errorDiv);
+
+        /*
+         * Ensure Leaflet recalculates its dimensions if the map
+         * container was hidden or resized during initialization.
+         */
+        setTimeout(() => {
+            if (leafletMap) {
+                leafletMap.invalidateSize();
+            }
+        }, 100);
+    } catch (error) {
+        console.error('Map initialization failed:', error);
+
+        showMapMessage(
+            'Failed to load map layer. Check the API key and connection.'
+        );
     }
 }
 
+function showMapMessage(message) {
+    if (!elements.worldMap) return;
+
+    const existing = elements.worldMap.querySelector(
+        '.map-error-overlay'
+    );
+
+    if (existing) {
+        existing.textContent = message;
+        return;
+    }
+
+    const messageElement = document.createElement('div');
+    messageElement.className = 'map-error-overlay';
+    messageElement.textContent = message;
+
+    elements.worldMap.appendChild(messageElement);
+}
+
+/* =========================================================
+   MAP ENDPOINT MARKERS
+   ========================================================= */
+
 async function loadMarkers() {
+    if (!markerLayer || typeof L === 'undefined') return;
+
     try {
-        const endpoints = await apiRequest('/api/endpoints');
+        const response = await apiRequest('/api/endpoints');
+
+        const endpoints = Array.isArray(response)
+            ? response
+            : Array.isArray(response.endpoints)
+                ? response.endpoints
+                : [];
+
         markerLayer.clearLayers();
 
-        endpoints.forEach(ep => {
-            const status = deriveStatus(null, null); // Initial neutral state
-            const marker = L.circleMarker([ep.lat, ep.lon], {
-                radius: 6,
-                fillColor: status.color,
-                color: '#fff',
-                weight: 1,
-                opacity: 1,
-                fillOpacity: 0.8
-            }).addTo(markerLayer);
+        endpoints.forEach((endpoint) => {
+            const latitude = toNumber(endpoint.lat);
+            const longitude = toNumber(endpoint.lon);
+
+            if (
+                latitude === null ||
+                longitude === null ||
+                latitude < -90 ||
+                latitude > 90 ||
+                longitude < -180 ||
+                longitude > 180
+            ) {
+                console.warn('Skipping invalid map endpoint:', endpoint);
+                return;
+            }
+
+            const status = deriveStatus(null, null);
+
+            const marker = L.circleMarker(
+                [latitude, longitude],
+                {
+                    radius: 6,
+                    fillColor: status.color,
+                    color: '#FFFFFF',
+                    weight: 1,
+                    opacity: 1,
+                    fillOpacity: 0.8,
+                }
+            ).addTo(markerLayer);
 
             const popupContent = document.createElement('div');
             popupContent.className = 'map-popup-content';
 
             const title = document.createElement('span');
             title.className = 'map-popup-title';
-            title.textContent = ep.name;
+            title.textContent = endpoint.name || endpoint.target || 'Endpoint';
 
             const details = document.createElement('span');
             details.className = 'map-popup-details';
-            details.textContent = `${ep.target} - Approx: ${ep.lat}, ${ep.lon}`;
 
-            const actionBtn = document.createElement('button');
-            actionBtn.className = 'map-popup-action';
-            actionBtn.textContent = 'Select Endpoint';
+            details.textContent =
+                `${endpoint.target || 'Unknown target'} - ` +
+                `Approx: ${latitude}, ${longitude}`;
 
-            actionBtn.addEventListener('click', () => {
-                elements.targetInput.value = ep.target;
-                elements.targetInput.focus();
+            const actionButton = document.createElement('button');
+            actionButton.className = 'map-popup-action';
+            actionButton.textContent = 'Select Endpoint';
+
+            actionButton.addEventListener('click', () => {
+                if (elements.targetInput) {
+                    elements.targetInput.value = endpoint.target || '';
+                    elements.targetInput.focus();
+                }
             });
 
-            popupContent.appendChild(title);
-            popupContent.appendChild(details);
-            popupContent.appendChild(actionBtn);
+            popupContent.append(
+                title,
+                details,
+                actionButton
+            );
 
             marker.bindPopup(popupContent);
-            marker.target = ep.target; // Store target for status updates
+            marker.target = endpoint.target;
 
-            // Add a listener to update content when popup opens
             marker.on('popupopen', () => {
-                if (marker.latestData) {
-                    const popup = marker.getPopup();
-                    const contentDiv = popup.getContent();
-                    const details = contentDiv.querySelector('.map-popup-details');
-                    if (details) {
-                        details.textContent = `${marker.latestData.latency} | Loss: ${marker.latestData.loss} | ${marker.latestData.timestamp}`;
-                    }
+                if (!marker.latestData) return;
+
+                const content = marker.getPopup().getContent();
+
+                const detailsElement =
+                    content.querySelector('.map-popup-details');
+
+                if (detailsElement) {
+                    detailsElement.textContent =
+                        `${marker.latestData.latency} | ` +
+                        `Loss: ${marker.latestData.loss} | ` +
+                        `${marker.latestData.timestamp}`;
                 }
             });
         });
-    } catch (err) {
-        console.error('Failed to load markers:', err);
+    } catch (error) {
+        console.error('Failed to load map markers:', error);
     }
 }
 
 function updateMarkerStatus(measurement) {
-    if (!leafletMap || !markerLayer || !measurement.target) return;
+    const data = normalizeMeasurement(measurement);
 
-    markerLayer.eachLayer(marker => {
-        if (marker.target === measurement.target) {
-            const status = deriveStatus(measurement.packet_loss, measurement.latency_avg);
-            marker.setStyle({ fillColor: status.color });
+    if (
+        !data ||
+        !data.target ||
+        !leafletMap ||
+        !markerLayer
+    ) {
+        return;
+    }
 
-            // Store latest data on the marker object itself
-            marker.latestData = {
-                latency: measurement.latency_avg !== null ? `${measurement.latency_avg.toFixed(1)}ms` : 'N/A',
-                loss: measurement.packet_loss !== null ? `${measurement.packet_loss.toFixed(1)}%` : 'N/A',
-                timestamp: new Date().toLocaleTimeString()
-            };
+    const status = deriveStatus(
+        data.packet_loss,
+        data.latency_avg
+    );
 
-            // Update popup if it is currently open
-            const popup = marker.getPopup();
-            if (popup && popup.isOpen()) {
-                const contentDiv = popup.getContent();
-                const details = contentDiv.querySelector('.map-popup-details');
-                if (details) {
-                    details.textContent = `${marker.latestData.latency} | Loss: ${marker.latestData.loss} | ${marker.latestData.timestamp}`;
-                }
+    markerLayer.eachLayer((marker) => {
+        if (marker.target !== data.target) return;
+
+        marker.setStyle({
+            fillColor: status.color,
+        });
+
+        marker.latestData = {
+            latency: formatLatency(data.latency_avg),
+            loss: formatPacketLoss(data.packet_loss),
+            timestamp: new Date().toLocaleTimeString(),
+        };
+
+        const popup = marker.getPopup();
+
+        if (popup && popup.isOpen()) {
+            const content = popup.getContent();
+
+            const detailsElement =
+                content.querySelector('.map-popup-details');
+
+            if (detailsElement) {
+                detailsElement.textContent =
+                    `${marker.latestData.latency} | ` +
+                    `Loss: ${marker.latestData.loss} | ` +
+                    `${marker.latestData.timestamp}`;
             }
         }
     });
 }
 
 function updateMarkersFromResults(results) {
-    results.forEach(res => {
-        updateMarkerStatus(res);
+    if (!Array.isArray(results)) return;
+
+    results.forEach((result) => {
+        updateMarkerStatus(result);
     });
 }
 
+/* =========================================================
+   INITIALIZATION
+   ========================================================= */
+
 async function init() {
+    /*
+     * Validate required controls before registering events.
+     */
+    if (!elements.targetInput || !elements.measureBtn) {
+        console.error(
+            'Required NetPulse elements are missing. Check index.html.'
+        );
+        return;
+    }
+
     elements.measureBtn.addEventListener('click', handleMeasure);
-    elements.traceBtn.addEventListener('click', handleTraceRoute);
-    elements.refreshBtn.addEventListener('click', fetchHistory);
-    elements.targetInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') handleMeasure();
+
+    if (elements.traceBtn) {
+        elements.traceBtn.addEventListener('click', handleTraceRoute);
+    }
+
+    if (elements.refreshBtn) {
+        elements.refreshBtn.addEventListener('click', () => {
+            fetchHistory({ showError: true });
+        });
+    }
+
+    elements.targetInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            handleMeasure();
+        }
     });
 
-    // Monitoring Event Listeners
-    elements.startMonBtn.addEventListener('click', startMonitoring);
-    elements.pauseMonBtn.addEventListener('click', pauseMonitoring);
-    elements.resumeMonBtn.addEventListener('click', resumeMonitoring);
+    if (elements.startMonBtn) {
+        elements.startMonBtn.addEventListener(
+            'click',
+            startMonitoring
+        );
+    }
+
+    if (elements.pauseMonBtn) {
+        elements.pauseMonBtn.addEventListener(
+            'click',
+            pauseMonitoring
+        );
+    }
+
+    if (elements.resumeMonBtn) {
+        elements.resumeMonBtn.addEventListener(
+            'click',
+            resumeMonitoring
+        );
+    }
 
     try {
-        await fetch(`${API_BASE_URL}/api/history`);
-        elements.connectionStatus.textContent = 'Connected';
-        elements.connectionStatus.classList.add('connected');
-        await fetchHistory();
+        /*
+         * Use the same API helper so HTTP failures are detected.
+         */
+        await apiRequest('/api/history');
+
+        if (elements.connectionStatus) {
+            elements.connectionStatus.textContent = 'Connected';
+            elements.connectionStatus.classList.remove('offline');
+            elements.connectionStatus.classList.add('connected');
+        }
+
+        /*
+         * During initial startup, show the latest historical
+         * measurement. Subsequent refreshes will not overwrite
+         * fresh test results.
+         */
+        await fetchHistory({ updateMetrics: true });
+
         await initMap();
-    } catch (err) {
-        elements.connectionStatus.textContent = 'Offline';
-        elements.connectionStatus.classList.add('offline');
+    } catch (error) {
+        console.error('Backend connection failed:', error);
+
+        if (elements.connectionStatus) {
+            elements.connectionStatus.textContent = 'Offline';
+            elements.connectionStatus.classList.remove('connected');
+            elements.connectionStatus.classList.add('offline');
+        }
+
+        showInputError(
+            'Backend is offline. Start the Flask server and reload the page.'
+        );
     }
 }
 
