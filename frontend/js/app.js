@@ -40,6 +40,7 @@ const elements = {
 let latencyChart = null;
 let leafletMap = null;
 let markerLayer = null;
+let routeLayer = null;
 
 let monitoringActive = false;
 let pollingTimer = null;
@@ -692,30 +693,90 @@ function renderRouteDetails(hops, complete) {
     elements.routeDetails.classList.remove('hidden');
 }
 
-function drawRouteOnMap() {
-    /*
-     * The current traceroute response contains hop data,
-     * not geographic coordinates. Do not invent map positions.
-     */
-    if (!elements.routeHopList) return;
-
-    const existingNote =
-        elements.routeHopList.querySelector('.map-note');
-
-    if (existingNote) {
-        existingNote.remove();
+function drawRouteOnMap(hops) {
+    if (!leafletMap || typeof L === 'undefined') {
+        console.warn('Traceroute map is not initialized.');
+        return;
     }
 
-    const note = document.createElement('li');
-    note.className = 'map-note';
-    note.style.color = 'var(--muted, #999999)';
-    note.style.fontStyle = 'italic';
-    note.style.marginTop = '8px';
+    if (routeLayer) {
+        leafletMap.removeLayer(routeLayer);
+    }
 
-    note.textContent =
-        'Note: Geographic map visualization is unavailable for this route.';
+    routeLayer = L.layerGroup().addTo(leafletMap);
 
-    elements.routeHopList.appendChild(note);
+    const locatedHops = (Array.isArray(hops) ? hops : [])
+        .map((hop) => ({
+            ...hop,
+            lat: toNumber(hop.lat),
+            lon: toNumber(hop.lon),
+        }))
+        .filter((hop) =>
+            hop.lat !== null &&
+            hop.lon !== null &&
+            hop.lat >= -90 &&
+            hop.lat <= 90 &&
+            hop.lon >= -180 &&
+            hop.lon <= 180
+        )
+        .sort((a, b) => Number(a.hop) - Number(b.hop));
+
+    const oldMessage = elements.worldMap?.querySelector(
+        '.map-error-overlay'
+    );
+
+    if (oldMessage) oldMessage.remove();
+
+    if (locatedHops.length === 0) {
+        showMapMessage(
+            'No traceroute hops could be mapped. ' +
+            'Public-IP geolocation may be unavailable.'
+        );
+        return;
+    }
+
+    const routePoints = [];
+
+    locatedHops.forEach((hop) => {
+        const point = [hop.lat, hop.lon];
+        routePoints.push(point);
+
+        const marker = L.circleMarker(point, {
+            radius: 5,
+            color: '#FFFFFF',
+            weight: 1,
+            fillColor: '#FF4545',
+            fillOpacity: 0.9,
+        }).addTo(routeLayer);
+
+        const popup = document.createElement('div');
+        const title = document.createElement('strong');
+        const details = document.createElement('div');
+
+        title.textContent = `Traceroute Hop ${hop.hop ?? '?'}`;
+
+        details.textContent =
+            `${hop.ip || 'Unknown IP'} · ${formatLatency(hop.latency)}` +
+            (hop.location ? ` · Approx. ${hop.location}` : '');
+
+        popup.append(title, details);
+        marker.bindPopup(popup);
+    });
+
+    if (routePoints.length >= 2) {
+        L.polyline(routePoints, {
+            color: '#FF4545',
+            weight: 3,
+            opacity: 0.9,
+        }).addTo(routeLayer);
+
+        leafletMap.fitBounds(routePoints, {
+            padding: [30, 30],
+            maxZoom: 8,
+        });
+    } else {
+        leafletMap.setView(routePoints[0], 7);
+    }
 }
 
 /* =========================================================

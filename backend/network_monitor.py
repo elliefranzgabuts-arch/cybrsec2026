@@ -5,6 +5,9 @@ import re
 import shutil
 import socket
 import subprocess
+import json
+import urllib.error
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
@@ -196,6 +199,64 @@ def _classify_ip(ip):
     return "public"
 
 
+
+def _get_ip_geolocation(ip, timeout=2.5):
+    """
+    Return approximate public-IP geolocation, or None when unavailable.
+    This is not the exact physical location of a router.
+    """
+    try:
+        address = ipaddress.ip_address(ip)
+
+        if not address.is_global:
+            return None
+
+        request = urllib.request.Request(
+            f"https://ipapi.co/{address.compressed}/json/",
+            headers={"User-Agent": "NetPulse/1.0"},
+        )
+
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+
+        lat = data.get("latitude")
+        lon = data.get("longitude")
+
+        if (
+            isinstance(lat, bool)
+            or isinstance(lon, bool)
+            or not isinstance(lat, (int, float))
+            or not isinstance(lon, (int, float))
+            or not (-90 <= lat <= 90)
+            or not (-180 <= lon <= 180)
+            or data.get("error")
+        ):
+            return None
+
+        place = ", ".join(
+            str(value).strip()
+            for value in (data.get("city"), data.get("country_name"))
+            if value and str(value).strip()
+        )
+
+        return {
+            "lat": float(lat),
+            "lon": float(lon),
+            "location": place or None,
+        }
+
+    except (
+        ValueError,
+        OSError,
+        urllib.error.URLError,
+        urllib.error.HTTPError,
+        json.JSONDecodeError,
+        TypeError,
+    ) as exc:
+        logger.debug("Geolocation unavailable for %s: %s", ip, exc)
+        return None
+
+
 def _parse_tracepath_output(stdout):
     """
     Parse tracepath output into one record per hop number.
@@ -383,6 +444,19 @@ def run_tracepath(target, max_hops=5, timeout=30):
         ) from exc
 
     hops = _parse_tracepath_output(stdout_content)
+
+    # Attach approximate locations only to publicly routable IP hops.
+    # Private addresses and timeouts deliberately remain unmapped.
+    for hop in hops:
+        hop.setdefault("lat", None)
+        hop.setdefault("lon", None)
+        hop.setdefault("location", None)
+
+        if hop.get("type") == "public" and hop.get("ip"):
+            location = _get_ip_geolocation(hop["ip"])
+            if location:
+                hop.update(location)
+
 
     if not hops:
         if timed_out:
